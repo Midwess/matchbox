@@ -935,7 +935,7 @@ fn create_data_channel(
             if let Ok(arraybuf) = event.data().dyn_into::<js_sys::ArrayBuffer>() {
                 let uarray = js_sys::Uint8Array::new(&arraybuf);
                 let body = uarray.to_vec();
-                log::info!("WASM received {} bytes from peer {peer_id}, batch_receiver={}", body.len(), batch_receiver.is_some());
+                log::debug!("WASM received {} bytes from peer {peer_id}, batch_receiver={}", body.len(), batch_receiver.is_some());
 
                 let packet = if let Some(ref mut receiver) = batch_receiver {
                     let now_ms = js_sys::Date::now();
