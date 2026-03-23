@@ -60,7 +60,7 @@ async fn main() {
     // 3. Spawn sender in background
     log::info!("Starting sender (background)...");
     let sender_handle = tokio::spawn(async move {
-        run_sender().await;
+        run_sender().await
     });
 
     // 4. Wait before starting receiver
@@ -68,15 +68,24 @@ async fn main() {
 
     // 5. Run receiver (blocks until test completes)
     log::info!("Starting receiver...");
-    run_receiver().await;
+    let (receiver_mbps, receiver_bytes, receiver_elapsed) = run_receiver().await;
 
     // 6. Wait for sender to finish
-    sender_handle.await.unwrap();
+    let sender_mbps = sender_handle.await.unwrap();
 
-    log::info!("=== Speed test complete ===");
+    log::info!("=== Speed Test Results ===");
+    log::info!("Sender enqueue rate: {:.2} Mbps", sender_mbps);
+    log::info!(
+        "Receiver throughput: {:.2} Mbps ({} bytes in {:.3}s)",
+        receiver_mbps,
+        receiver_bytes,
+        receiver_elapsed
+    );
 }
 
-async fn run_sender() {
+/// Runs the sender: connects, sends data, waits for completion signal.
+/// Returns the sender's enqueue rate in Mbps.
+async fn run_sender() -> f64 {
     let (mut socket, loop_fut) = WebRtcSocket::new_reliable(SERVER_URL);
 
     let loop_fut = loop_fut.fuse();
@@ -89,7 +98,6 @@ async fn run_sender() {
 
     // Phase 1: wait for peer to connect
     loop {
-        // Drain peer updates synchronously
         for (peer, state) in socket.update_peers() {
             match state {
                 PeerState::Connected => {
@@ -98,14 +106,11 @@ async fn run_sender() {
                 }
                 PeerState::Disconnected => {
                     log::info!("[sender] Peer left: {peer}");
-                    return;
+                    return 0.0;
                 }
             }
         }
-        // Drain messages synchronously
-        for (_peer, _packet) in socket.channel_mut(CHANNEL_ID).receive() {
-            // nothing expected during connect
-        }
+        for (_peer, _packet) in socket.channel_mut(CHANNEL_ID).receive() {}
 
         select! {
             _ = (&mut timeout).fuse() => {
@@ -113,7 +118,7 @@ async fn run_sender() {
             }
             _ = &mut loop_fut => {
                 log::info!("[sender] Socket loop ended");
-                return;
+                return 0.0;
             }
         }
 
@@ -152,21 +157,19 @@ async fn run_sender() {
     // Phase 3: wait for receiver to signal completion
     log::info!("[sender] Waiting for receiver completion signal...");
     loop {
-        // Drain peer updates
         for (_peer, state) in socket.update_peers() {
             match state {
                 PeerState::Disconnected => {
                     log::info!("[sender] Peer disconnected");
-                    return;
+                    return 0.0;
                 }
                 PeerState::Connected => {}
             }
         }
-        // Drain messages
         for (_p, packet) in socket.channel_mut(CHANNEL_ID).receive() {
             if &packet[..] == DONE_MSG {
                 log::info!("[sender] Receiver confirmed completion");
-                return;
+                return mbps;
             }
         }
 
@@ -176,13 +179,15 @@ async fn run_sender() {
             }
             _ = &mut loop_fut => {
                 log::info!("[sender] Socket loop ended");
-                return;
+                return 0.0;
             }
         }
     }
 }
 
-async fn run_receiver() {
+/// Runs the receiver: connects, receives data, signals completion.
+/// Returns (throughput in Mbps, bytes received, elapsed seconds).
+async fn run_receiver() -> (f64, usize, f64) {
     let (mut socket, loop_fut) = WebRtcSocket::new_reliable(SERVER_URL);
 
     let loop_fut = loop_fut.fuse();
@@ -200,7 +205,7 @@ async fn run_receiver() {
                 }
                 PeerState::Disconnected => {
                     log::info!("[receiver] Peer disconnected");
-                    return;
+                    return (0.0, 0, 0.0);
                 }
             }
         }
@@ -212,7 +217,7 @@ async fn run_receiver() {
             }
             _ = &mut loop_fut => {
                 log::info!("[receiver] Socket loop ended");
-                return;
+                return (0.0, 0, 0.0);
             }
         }
 
@@ -225,13 +230,20 @@ async fn run_receiver() {
     log::info!("[receiver] Waiting for data...");
     let mut bytes_received = 0usize;
     let mut start: Option<Instant> = None;
+    let mut mbps = 0.0;
 
     loop {
         for (_peer, state) in socket.update_peers() {
             match state {
                 PeerState::Disconnected => {
                     log::info!("[receiver] Peer disconnected");
-                    return;
+                    let elapsed_secs = start.map(|s| s.elapsed().as_secs_f64()).unwrap_or(0.0);
+                    mbps = if elapsed_secs > 0.0 {
+                        (bytes_received as f64 * 8.0) / elapsed_secs / 1_000_000.0
+                    } else {
+                        0.0
+                    };
+                    return (mbps, bytes_received, elapsed_secs);
                 }
                 PeerState::Connected => {}
             }
@@ -256,23 +268,29 @@ async fn run_receiver() {
         }
     }
 
-    if let Some(start_time) = start {
-        let elapsed = start_time.elapsed();
-        let mbps = (bytes_received as f64 * 8.0) / elapsed.as_secs_f64() / 1_000_000.0;
-        log::info!(
-            "[receiver] Received {} bytes in {:.3?} = {:.2} Mbps",
-            bytes_received,
-            elapsed,
-            mbps
-        );
-    }
+    let elapsed_secs = start.map(|s| s.elapsed().as_secs_f64()).unwrap_or(0.0);
+    let mbps = if elapsed_secs > 0.0 {
+        (bytes_received as f64 * 8.0) / elapsed_secs / 1_000_000.0
+    } else {
+        0.0
+    };
+    log::info!(
+        "[receiver] Received {} bytes in {:.3}s = {:.2} Mbps",
+        bytes_received,
+        elapsed_secs,
+        mbps
+    );
 
     // Phase 3: send completion signal to sender
     log::info!("[receiver] Signaling completion to sender...");
     let peers: Vec<_> = socket.connected_peers().collect();
     for peer in peers {
-        socket.channel_mut(CHANNEL_ID).send(DONE_MSG.to_vec().into_boxed_slice(), peer);
+        socket
+            .channel_mut(CHANNEL_ID)
+            .send(DONE_MSG.to_vec().into_boxed_slice(), peer);
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
     log::info!("[receiver] Done");
+
+    (mbps, bytes_received, elapsed_secs)
 }
