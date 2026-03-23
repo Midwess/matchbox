@@ -754,7 +754,7 @@ async fn wait_for_ice_gathering_complete(
     }));
 
     let ice_timeout = Duration::from_millis((timeout.as_millis() as u64).min(5500));
-    let early_check_delay = Duration::from_secs(2);
+    let early_check_delay = Duration::from_millis(1000);
 
     let mut timeout_delay = Delay::new(ice_timeout).fuse();
     let mut early_check = Delay::new(early_check_delay).fuse();
