@@ -453,7 +453,6 @@ impl Messenger for WasmMessenger {
         };
 
         debug!("received offer");
-        info!("received offer: {}", offer_sdp);
 
         // Merge ice configs if offer contains config
         let merged_ice_config = offer_ice_config.unwrap_or(ice_server_config.clone());
@@ -824,7 +823,7 @@ async fn wait_for_ice_gathering_complete(_peer_id: PeerId, conn: Arc<RtcConnecti
     conn.set_onicecandidate(Some(onicecandidate_closure.as_ref().unchecked_ref()));
 
     let ice_timeout = Duration::from_millis((timeout.as_millis() as u64).min(5500));
-    let early_check_delay = Duration::from_millis(1000);
+    let early_check_delay = Duration::from_secs(2);
 
     let mut timeout_delay = Delay::new(ice_timeout).fuse();
     let mut early_check = Delay::new(early_check_delay).fuse();

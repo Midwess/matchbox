@@ -29,7 +29,7 @@ impl IceCandidateTracker {
         let host = self.host_count.load(Ordering::Relaxed);
         let srflx = self.srflx_count.load(Ordering::Relaxed);
         let relay = self.relay_count.load(Ordering::Relaxed);
-        host >= 1 || srflx >= 1 || relay >= 1
+        (host >= 1 && srflx >= 1) || relay >= 1
     }
 
     pub fn summary(&self) -> String {

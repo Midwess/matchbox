@@ -4483,9 +4483,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
- "socket2",
  "thiserror 2.0.12",
- "tokio",
  "tokio-util",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -6816,6 +6814,22 @@ checksum = "4f5fd57c80058a56cf5c777ab8a126398ece8e442983605d280a44ce79d0edef"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "speed_test_example"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "console_log",
+ "futures",
+ "futures-timer",
+ "log",
+ "matchbox_signaling",
+ "matchbox_socket",
+ "tokio",
+ "tracing-subscriber",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
