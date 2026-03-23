@@ -43,6 +43,10 @@ use webrtc::ice::network_type::NetworkType;
 use webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use crate::webrtc_socket::batch::BatchReceiver;
 use std::time::{SystemTime, UNIX_EPOCH};
+use webrtc::ice::udp_network::UDPNetwork;
+use webrtc::ice::udp_mux::{UDPMuxDefault, UDPMuxParams};
+use socket2::{Socket, Domain, Type};
+use std::net::SocketAddr;
 use crate::webrtc_socket::error::PeerError;
 
 impl From<webrtc::Error> for SignalingError {
@@ -868,6 +872,37 @@ async fn create_rtc_peer_connection(
     ice_server_config: &RtcIceServerConfig,
 ) -> Result<(Arc<RTCPeerConnection>, Arc<CandidateTrickle>), Box<dyn std::error::Error>> {
     let mut setting_engine = SettingEngine::default();
+    
+    // Create a UDP socket with custom buffer sizes using socket2
+    // We try to create a dual-stack IPv6 socket first to support both IPv4 and IPv6
+    let (socket, bind_addr) = if let Ok(socket) = Socket::new(Domain::IPV6, Type::DGRAM, None) {
+        if let Err(e) = socket.set_only_v6(false) {
+            warn!("Failed to set IPV6_V6ONLY=false: {e:?}");
+        }
+        (socket, "[::]:0")
+    } else {
+        (Socket::new(Domain::IPV4, Type::DGRAM, None)?, "0.0.0.0:0")
+    };
+
+    // Set buffer sizes to 8MB (8 * 1024 * 1024)
+    socket.set_recv_buffer_size(8 * 1024 * 1024)?;
+    socket.set_send_buffer_size(8 * 1024 * 1024)?;
+    // Bind to ephemeral port (0) on all interfaces
+    socket.bind(&bind_addr.parse::<SocketAddr>()?.into())?;
+
+    let socket: std::net::UdpSocket = socket.into();
+    socket.set_nonblocking(true)?;
+    let socket = tokio::net::UdpSocket::from_std(socket)?;
+
+    let params = UDPMuxParams::new(socket);
+    let udp_mux = UDPMuxDefault::new(params);
+    let udp_network = UDPNetwork::Muxed(udp_mux);
+    setting_engine.set_udp_network(udp_network);
+
+    // Increase MTU for better performance (especially on Windows)
+    setting_engine.set_receive_mtu(1500);
+    // Explicitly allow both IPv4 and IPv6
+    setting_engine.set_network_types(vec![NetworkType::Udp4, NetworkType::Udp6]);
 
     // 1. Filter out interfaces that cause binding errors or are virtual
     setting_engine.set_interface_filter(Box::new(|iface_name: &str| {

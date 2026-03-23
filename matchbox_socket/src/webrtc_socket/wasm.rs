@@ -453,6 +453,7 @@ impl Messenger for WasmMessenger {
         };
 
         debug!("received offer");
+        info!("received offer: {}", offer_sdp);
 
         // Merge ice configs if offer contains config
         let merged_ice_config = offer_ice_config.unwrap_or(ice_server_config.clone());
